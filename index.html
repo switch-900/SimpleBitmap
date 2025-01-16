@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<!-- Made possible by @bitlodo and @boppleton -->
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Bitmap</title>
+    <style>
+        /* Base styles */
+        body {
+            margin: 0;
+            background: black;
+            color: orange;
+            font-family: sans-serif;
+        }
+
+        #visualizer {
+            width: 800px;
+            height: 800px;
+            margin: 20px auto;
+            position: relative;
+        }
+
+        #blockNumber {
+            margin: 5px;
+        }
+
+        button {
+            background: orange;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+
+        .center {
+            text-align: center;
+            padding: 20px;
+        }
+
+        /* Button states and animations */
+        button:disabled {
+            opacity: 0.5;
+            cursor: wait;
+        }
+
+        /* Loading animation for button */
+        button.loading::after {
+            content: '';
+            display: inline-block;
+            width: 12px;
+            margin-left: 5px;
+            animation: dots 1s steps(5, end) infinite;
+        }
+
+        /* Loading dots animation keyframes */
+        @keyframes dots {
+
+            0%,
+            20% {
+                content: '.';
+            }
+
+            40% {
+                content: '..';
+            }
+
+            60%,
+            100% {
+                content: '...';
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Main container -->
+    <div class="center">
+        <!-- Input form -->
+        <input type="text" id="blockNumber" placeholder="Enter block number">
+        <button onclick="load()">Load</button>
+        <!-- Visualization container -->
+        <div id="visualizer"></div>
+    </div>
+
+    <script>
+        /**
+         * Main function to load and display bitmap visualization
+         * 1. Fetches block data from blockchain
+         * 2. Loads Mondrian layout module
+         * 3. Processes transaction data
+         * 4. Renders visualization
+         */
+        async function load() {
+            // Get button element and show loading state
+            const btn = document.querySelector('button');
+            btn.disabled = true;
+            btn.classList.add('loading');
+            btn.textContent = 'Loading';
+
+            try {
+                // Fetch block data and layout module in parallel
+                const blockNumber = document.getElementById('blockNumber').value;
+                const [block, moduleCode] = await Promise.all([
+                    // Get blockchain data for the specified block
+                    fetch(`https://blockchain.info/rawblock/${blockNumber}?cors=true`).then(r => r.json()),
+                    // Get Mondrian layout module from ordinals
+                    fetch('https://ordinals.com/content/55551557695dd82a2bda5ec3497684ec7cbb2cc1752ff5101accff1648666c3ai0').then(r => r.text())
+                ]);
+
+                // Load the Mondrian module dynamically
+                const module = await import(URL.createObjectURL(new Blob([moduleCode], { type: 'application/javascript' })));
+                
+                // Process transaction data into square sizes
+                const sizes = block.tx.map(tx => 
+                    module.getSquareSize(tx.out.reduce((s, o) => s + o.value, 0))
+                );
+
+                // Create layout and calculate scaling
+                const mondrian = new module.MondrianLayout(sizes);
+                const container = document.getElementById('visualizer');
+                const scale = Math.min(800 / mondrian.width, 800 / mondrian.height);
+
+                // Clear container and render squares
+                container.innerHTML = '';
+                mondrian.slots.forEach((slot, i) => {
+                    // Create and position each square
+                    const div = document.createElement('div');
+                    Object.assign(div.style, {
+                        position: 'absolute',
+                        left: `${slot.position.x * scale}px`,
+                        top: `${slot.position.y * scale}px`,
+                        width: `${(slot.size - 0.5) * scale}px`,
+                        height: `${(slot.size - 0.5) * scale}px`,
+                        backgroundColor: 'orange'
+                    });
+
+                    // Add hover effects
+                    div.onmouseover = () => { div.style.backgroundColor = 'red'; div.textContent = i; };
+                    div.onmouseout = () => { div.style.backgroundColor = 'orange'; div.textContent = ''; };
+                    container.appendChild(div);
+                });
+            } catch (error) {
+                console.error('Error:', error);
+            } finally {
+                // Reset button state
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.textContent = 'Load';
+            }
+        }
+    </script>
+</body>
+
+</html>
