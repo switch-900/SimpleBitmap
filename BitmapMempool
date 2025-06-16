@@ -1,10 +1,9 @@
 <!DOCTYPE html>
-<!-- Enhanced Bitcoin Block Visualizer -->
 <html lang="en">
 
 <head>
     <meta charset="UTF-8">
-    <title>Bitcoin Block Visualizer</title>
+    <title>Bitmap Visualizer</title>
     <style>
         /* Base styles */
         body {
