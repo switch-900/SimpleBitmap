@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<!-- @switch-900 - Made possible by @bitlodo and @boppleton -->
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Bitmap</title>
+    <style>
+        /* Base styles */
+        body {
+            margin: 0;
+            background: black;
+            color: orange;
+            font-family: sans-serif;
+        }
+
+        #visualizer {
+            width: 800px;
+            height: 800px;
+            margin: 20px auto;
+            position: relative;
+        }
+
+        #blockNumber {
+            margin: 5px;
+        }
+
+        button {
+            background: orange;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+
+        .center {
+            text-align: center;
+            padding: 20px;
+        }
+
+        /* Button states and animations */
+        button:disabled {
+            opacity: 0.5;
+            cursor: wait;
+        }
+
+        /* Loading animation for button */
+        button.loading::after {
+            content: '';
+            display: inline-block;
+            width: 12px;
+            margin-left: 5px;
+            animation: dots 1s steps(5, end) infinite;
+        }
+
+        /* Loading dots animation keyframes */
+        @keyframes dots {
+
+            0%,
+            20% {
+                content: '.';
+            }
+
+            40% {
+                content: '..';
+            }
+
+            60%,
+            100% {
+                content: '...';
+            }
+        }
+
+        .error {
+            color: red;
+            margin: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Main container -->
+    <div class="center">
+        <!-- Input form -->
+        <input type="text" id="blockNumber" placeholder="Enter block number">
+        <button onclick="load()">Load</button>
+        <!-- Error display -->
+        <div id="error" class="error"></div>
+        <!-- Visualization container -->
+        <div id="visualizer"></div>
+    </div>
+
+    <script>
+        /**
+         * Main function to load and display bitmap visualization
+         * 1. Fetches block hash from block height
+         * 2. Fetches block transactions from mempool.space
+         * 3. Loads Mondrian layout module
+         * 4. Processes transaction data
+         * 5. Renders visualization
+         */
+        async function load() {
+            // Get button element and show loading state
+            const btn = document.querySelector('button');
+            const errorDiv = document.getElementById('error');
+            btn.disabled = true;
+            btn.classList.add('loading');
+            btn.textContent = 'Loading';
+            errorDiv.textContent = '';
+
+            try {
+                const blockNumber = document.getElementById('blockNumber').value;
+                
+                if (!blockNumber) {
+                    throw new Error('Please enter a block number');
+                }
+
+                // First, get the block hash from the block height
+                btn.textContent = 'Getting block hash';
+                const blockHashResponse = await fetch(`https://mempool.space/api/block-height/${blockNumber}`);
+                
+                if (!blockHashResponse.ok) {
+                    throw new Error(`Block ${blockNumber} not found`);
+                }
+                
+                const blockHash = await blockHashResponse.text();
+
+                // Get block transactions and layout module in parallel
+                btn.textContent = 'Loading transactions';
+                const [transactions, moduleCode] = await Promise.all([
+                    // Get blockchain transactions for the specified block
+                    fetch(`https://mempool.space/api/block/${blockHash}/txs`).then(r => {
+                        if (!r.ok) throw new Error('Failed to fetch transactions');
+                        return r.json();
+                    }),
+                    // Get Mondrian layout module from ordinals
+                    fetch('https://ordinals.com/content/55551557695dd82a2bda5ec3497684ec7cbb2cc1752ff5101accff1648666c3ai0').then(r => {
+                        if (!r.ok) throw new Error('Failed to fetch layout module');
+                        return r.text();
+                    })
+                ]);
+
+                btn.textContent = 'Processing';
+
+                // Load the Mondrian module dynamically
+                const module = await import(URL.createObjectURL(new Blob([moduleCode], { type: 'application/javascript' })));
+                
+                // Process transaction data into square sizes
+                // Note: mempool.space uses 'vout' instead of 'out'
+                const sizes = transactions.map(tx => 
+                    module.getSquareSize(tx.vout.reduce((s, o) => s + o.value, 0))
+                );
+
+                // Create layout and calculate scaling
+                const mondrian = new module.MondrianLayout(sizes);
+                const container = document.getElementById('visualizer');
+                const scale = Math.min(800 / mondrian.width, 800 / mondrian.height);
+
+                // Clear container and render squares
+                container.innerHTML = '';
+                mondrian.slots.forEach((slot, i) => {
+                    // Create and position each square
+                    const div = document.createElement('div');
+                    Object.assign(div.style, {
+                        position: 'absolute',
+                        left: `${slot.position.x * scale}px`,
+                        top: `${slot.position.y * scale}px`,
+                        width: `${(slot.size - 0.5) * scale}px`,
+                        height: `${(slot.size - 0.5) * scale}px`,
+                        backgroundColor: 'orange'
+                    });
+
+                    // Add hover effects with transaction info
+                    div.onmouseover = () => { 
+                        div.style.backgroundColor = 'red'; 
+                        div.textContent = `TX ${i}`; 
+                        div.title = `Transaction ${i}: ${transactions[i].txid}`;
+                    };
+                    div.onmouseout = () => { 
+                        div.style.backgroundColor = 'orange'; 
+                        div.textContent = ''; 
+                        div.title = '';
+                    };
+                    container.appendChild(div);
+                });
+
+                console.log(`Loaded ${transactions.length} transactions from block ${blockNumber}`);
+
+            } catch (error) {
+                console.error('Error:', error);
+                errorDiv.textContent = `Error: ${error.message}`;
+            } finally {
+                // Reset button state
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.textContent = 'Load';
+            }
+        }
+
+        // Allow Enter key to trigger load
+        document.getElementById('blockNumber').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                load();
+            }
+        });
+    </script>
+</body>
+
+</html>
