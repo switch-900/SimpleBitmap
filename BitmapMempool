@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- @switch-900 - Made possible by @bitlodo and @boppleton -->
+<!-- Enhanced Bitcoin Block Visualizer -->
 <html lang="en">
 
 <head>
     <meta charset="UTF-8">
-    <title>Bitmap</title>
+    <title>Bitcoin Block Visualizer</title>
     <style>
         /* Base styles */
         body {
@@ -19,10 +19,15 @@
             height: 800px;
             margin: 20px auto;
             position: relative;
+            border: 1px solid #333;
         }
 
         #blockNumber {
             margin: 5px;
+            padding: 5px;
+            background: #222;
+            color: orange;
+            border: 1px solid orange;
         }
 
         button {
@@ -31,11 +36,17 @@
             border: none;
             padding: 5px 10px;
             cursor: pointer;
+            margin: 5px;
         }
 
         .center {
             text-align: center;
             padding: 20px;
+        }
+
+        .info {
+            margin: 10px 0;
+            font-size: 14px;
         }
 
         /* Button states and animations */
@@ -55,150 +66,312 @@
 
         /* Loading dots animation keyframes */
         @keyframes dots {
-
-            0%,
-            20% {
-                content: '.';
-            }
-
-            40% {
-                content: '..';
-            }
-
-            60%,
-            100% {
-                content: '...';
-            }
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
         }
 
         .error {
             color: red;
-            margin: 10px;
+            margin: 10px 0;
+        }
+
+        .stats {
+            background: #111;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+
+        .transaction-square {
+            position: absolute;
+            border: 0.5px solid #444;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .transaction-square:hover {
+            border-color: white !important;
+            z-index: 100;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0,0,0,0.9);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
         }
     </style>
 </head>
 
 <body>
-    <!-- Main container -->
     <div class="center">
-        <!-- Input form -->
-        <input type="text" id="blockNumber" placeholder="Enter block number">
-        <button onclick="load()">Load</button>
-        <!-- Error display -->
-        <div id="error" class="error"></div>
-        <!-- Visualization container -->
+        <h1>Bitcoin Block Visualizer</h1>
+        <div>
+            <input type="text" id="blockNumber" placeholder="Enter block number (e.g. 800000)">
+            <button onclick="load()">Load Block</button>
+            <button onclick="loadLatest()">Load Latest</button>
+        </div>
+        
+        <div id="stats" class="stats" style="display:none;">
+            <div>Block: <span id="blockInfo"></span></div>
+            <div>Transactions: <span id="txCount"></span></div>
+            <div>Total Value: <span id="totalValue"></span> BTC</div>
+        </div>
+        
+        <div id="error" class="error" style="display:none;"></div>
         <div id="visualizer"></div>
+        <div class="tooltip" id="tooltip"></div>
     </div>
 
     <script>
+        let currentBlock = null;
+
+        /**
+         * Load the latest block
+         */
+        async function loadLatest() {
+            try {
+                const latest = await fetch('https://blockchain.info/latestblock?cors=true').then(r => r.json());
+                document.getElementById('blockNumber').value = latest.height;
+                await load();
+            } catch (error) {
+                showError('Failed to fetch latest block: ' + error.message);
+            }
+        }
+
         /**
          * Main function to load and display bitmap visualization
-         * 1. Fetches block hash from block height
-         * 2. Fetches block transactions from mempool.space
-         * 3. Loads Mondrian layout module
-         * 4. Processes transaction data
-         * 5. Renders visualization
          */
         async function load() {
-            // Get button element and show loading state
             const btn = document.querySelector('button');
-            const errorDiv = document.getElementById('error');
+            const blockNumberInput = document.getElementById('blockNumber');
+            const blockNumber = blockNumberInput.value.trim();
+            
+            if (!blockNumber) {
+                showError('Please enter a block number');
+                return;
+            }
+
+            // Show loading state
             btn.disabled = true;
             btn.classList.add('loading');
             btn.textContent = 'Loading';
-            errorDiv.textContent = '';
-
+            hideError();
+            
             try {
-                const blockNumber = document.getElementById('blockNumber').value;
+                console.log(`Fetching block ${blockNumber}...`);
                 
-                if (!blockNumber) {
-                    throw new Error('Please enter a block number');
-                }
-
-                // First, get the block hash from the block height
-                btn.textContent = 'Getting block hash';
-                const blockHashResponse = await fetch(`https://mempool.space/api/block-height/${blockNumber}`);
-                
-                if (!blockHashResponse.ok) {
-                    throw new Error(`Block ${blockNumber} not found`);
-                }
-                
-                const blockHash = await blockHashResponse.text();
-
-                // Get block transactions and layout module in parallel
-                btn.textContent = 'Loading transactions';
-                const [transactions, moduleCode] = await Promise.all([
-                    // Get blockchain transactions for the specified block
-                    fetch(`https://mempool.space/api/block/${blockHash}/txs`).then(r => {
-                        if (!r.ok) throw new Error('Failed to fetch transactions');
+                // Fetch block data
+                const block = await fetch(`https://blockchain.info/rawblock/${blockNumber}?cors=true`)
+                    .then(r => {
+                        if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
                         return r.json();
-                    }),
-                    // Get Mondrian layout module from ordinals
-                    fetch('https://ordinals.com/content/55551557695dd82a2bda5ec3497684ec7cbb2cc1752ff5101accff1648666c3ai0').then(r => {
-                        if (!r.ok) throw new Error('Failed to fetch layout module');
-                        return r.text();
-                    })
-                ]);
-
-                btn.textContent = 'Processing';
-
-                // Load the Mondrian module dynamically
-                const module = await import(URL.createObjectURL(new Blob([moduleCode], { type: 'application/javascript' })));
-                
-                // Process transaction data into square sizes
-                // Note: mempool.space uses 'vout' instead of 'out'
-                const sizes = transactions.map(tx => 
-                    module.getSquareSize(tx.vout.reduce((s, o) => s + o.value, 0))
-                );
-
-                // Create layout and calculate scaling
-                const mondrian = new module.MondrianLayout(sizes);
-                const container = document.getElementById('visualizer');
-                const scale = Math.min(800 / mondrian.width, 800 / mondrian.height);
-
-                // Clear container and render squares
-                container.innerHTML = '';
-                mondrian.slots.forEach((slot, i) => {
-                    // Create and position each square
-                    const div = document.createElement('div');
-                    Object.assign(div.style, {
-                        position: 'absolute',
-                        left: `${slot.position.x * scale}px`,
-                        top: `${slot.position.y * scale}px`,
-                        width: `${(slot.size - 0.5) * scale}px`,
-                        height: `${(slot.size - 0.5) * scale}px`,
-                        backgroundColor: 'orange'
                     });
 
-                    // Add hover effects with transaction info
-                    div.onmouseover = () => { 
-                        div.style.backgroundColor = 'red'; 
-                        div.textContent = `TX ${i}`; 
-                        div.title = `Transaction ${i}: ${transactions[i].txid}`;
-                    };
-                    div.onmouseout = () => { 
-                        div.style.backgroundColor = 'orange'; 
-                        div.textContent = ''; 
-                        div.title = '';
-                    };
-                    container.appendChild(div);
-                });
+                currentBlock = block;
+                console.log(`Block loaded: ${block.tx.length} transactions`);
 
-                console.log(`Loaded ${transactions.length} transactions from block ${blockNumber}`);
+                // Update stats
+                updateStats(block);
+
+                // Try to use Mondrian layout first, fallback to grid if unavailable
+                try {
+                    await renderWithMondrian(block);
+                } catch (mondrianError) {
+                    console.warn('Mondrian layout failed, using grid layout:', mondrianError);
+                    renderWithGrid(block);
+                }
 
             } catch (error) {
-                console.error('Error:', error);
-                errorDiv.textContent = `Error: ${error.message}`;
+                console.error('Error loading block:', error);
+                showError(`Failed to load block ${blockNumber}: ${error.message}`);
             } finally {
                 // Reset button state
                 btn.disabled = false;
                 btn.classList.remove('loading');
-                btn.textContent = 'Load';
+                btn.textContent = 'Load Block';
             }
         }
 
+        /**
+         * Render using Mondrian layout (original method)
+         */
+        async function renderWithMondrian(block) {
+            console.log('Attempting Mondrian layout...');
+            
+            // Fetch Mondrian module
+            const moduleCode = await fetch('https://ordinals.com/content/55551557695dd82a2bda5ec3497684ec7cbb2cc1752ff5101accff1648666c3ai0')
+                .then(r => {
+                    if (!r.ok) throw new Error('Failed to fetch Mondrian module');
+                    return r.text();
+                });
+
+            // Load the Mondrian module
+            const module = await import(URL.createObjectURL(new Blob([moduleCode], { type: 'application/javascript' })));
+            
+            // Process ALL transactions
+            const sizes = block.tx.map(tx => {
+                const totalValue = tx.out.reduce((s, o) => s + o.value, 0);
+                return module.getSquareSize(totalValue);
+            });
+
+            console.log(`Processing ${sizes.length} transactions with Mondrian layout`);
+
+            // Create layout
+            const mondrian = new module.MondrianLayout(sizes);
+            renderLayout(mondrian, block.tx);
+        }
+
+        /**
+         * Fallback grid layout for when Mondrian fails or for very large blocks
+         */
+        function renderWithGrid(block) {
+            console.log(`Using grid layout for ${block.tx.length} transactions`);
+            
+            const container = document.getElementById('visualizer');
+            const txCount = block.tx.length;
+            
+            // Calculate grid dimensions
+            const cols = Math.ceil(Math.sqrt(txCount));
+            const rows = Math.ceil(txCount / cols);
+            const cellWidth = 800 / cols;
+            const cellHeight = 800 / rows;
+
+            // Create pseudo-mondrian object for compatibility
+            const gridLayout = {
+                width: 800,
+                height: 800,
+                slots: block.tx.map((tx, i) => {
+                    const row = Math.floor(i / cols);
+                    const col = i % cols;
+                    const totalValue = tx.out.reduce((s, o) => s + o.value, 0);
+                    
+                    return {
+                        position: {
+                            x: col * cellWidth,
+                            y: row * cellHeight
+                        },
+                        size: Math.min(cellWidth, cellHeight) * 0.9 // Leave some padding
+                    };
+                })
+            };
+
+            renderLayout(gridLayout, block.tx);
+        }
+
+        /**
+         * Render the layout (works with both Mondrian and grid)
+         */
+        function renderLayout(layout, transactions) {
+            const container = document.getElementById('visualizer');
+            const scale = Math.min(800 / layout.width, 800 / layout.height);
+
+            // Clear container
+            container.innerHTML = '';
+
+            console.log(`Rendering ${layout.slots.length} squares`);
+
+            // Render all squares
+            layout.slots.forEach((slot, i) => {
+                const tx = transactions[i];
+                const totalValue = tx.out.reduce((s, o) => s + o.value, 0);
+                
+                // Create square element
+                const div = document.createElement('div');
+                div.className = 'transaction-square';
+                
+                // Keep original orange color for all transactions
+                const color = 'orange';
+
+                Object.assign(div.style, {
+                    left: `${slot.position.x * scale}px`,
+                    top: `${slot.position.y * scale}px`,
+                    width: `${(slot.size - 0.5) * scale}px`,
+                    height: `${(slot.size - 0.5) * scale}px`,
+                    backgroundColor: color
+                });
+
+                // Add interaction
+                addTransactionInteraction(div, tx, i, totalValue);
+                container.appendChild(div);
+            });
+        }
+
+        /**
+         * Add hover and click interactions to transaction squares
+         */
+        function addTransactionInteraction(element, tx, index, totalValue) {
+            const tooltip = document.getElementById('tooltip');
+            
+            element.onmouseenter = (e) => {
+                element.style.backgroundColor = 'red';
+                const btcValue = (totalValue / 100000000).toFixed(8);
+                tooltip.innerHTML = `
+                    <div>TX #${index}</div>
+                    <div>Value: ${btcValue} BTC</div>
+                    <div>Outputs: ${tx.out.length}</div>
+                    <div>Size: ${tx.size || 'N/A'} bytes</div>
+                `;
+                tooltip.style.display = 'block';
+                tooltip.style.left = e.pageX + 10 + 'px';
+                tooltip.style.top = e.pageY - 10 + 'px';
+            };
+
+            element.onmousemove = (e) => {
+                tooltip.style.left = e.pageX + 10 + 'px';
+                tooltip.style.top = e.pageY - 10 + 'px';
+            };
+
+            element.onmouseleave = () => {
+                element.style.backgroundColor = 'orange';
+                tooltip.style.display = 'none';
+            };
+
+            element.onclick = () => {
+                if (tx.hash) {
+                    window.open(`https://blockchain.info/tx/${tx.hash}`, '_blank');
+                }
+            };
+        }
+
+        /**
+         * Update statistics display
+         */
+        function updateStats(block) {
+            const totalValue = block.tx.reduce((sum, tx) => {
+                return sum + tx.out.reduce((s, o) => s + o.value, 0);
+            }, 0);
+
+            document.getElementById('blockInfo').textContent = `#${block.height || 'Unknown'} (${block.hash ? block.hash.substring(0, 16) + '...' : 'N/A'})`;
+            document.getElementById('txCount').textContent = block.tx.length;
+            document.getElementById('totalValue').textContent = (totalValue / 100000000).toFixed(2);
+            document.getElementById('stats').style.display = 'block';
+        }
+
+        /**
+         * Show error message
+         */
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        /**
+         * Hide error message
+         */
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+
         // Allow Enter key to trigger load
-        document.getElementById('blockNumber').addEventListener('keypress', function(e) {
+        document.getElementById('blockNumber').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 load();
             }
